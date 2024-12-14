@@ -80,24 +80,72 @@ exports.getUserProfile = async (req, res) => {
   }
 };
 
-// Update storage usage
 exports.updateStorageUsage = async (req, res) => {
-  const { userId, storageUsed } = req.body;
+  const { userId, usageDelta } = req.body; // usageDelta is the size to add or subtract (can be positive or negative)
+  const MAX_STORAGE = 50 * 1024 * 1024; // 50 MB in bytes
 
   try {
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { storageUsed },
-      { new: true }
-    );
-    if (!user) return res.status(404).json({ message: "User not found" });
+    // Fetch the user by firebaseUserId
+    const user = await User.findOne({ firebaseUserId: userId });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
+    // Calculate new storage usage
+    const newStorageUsed = user.storageUsed + usageDelta;
+
+    // Check if the new storage exceeds the limit
+    if (newStorageUsed > MAX_STORAGE) {
+      return res.status(400).json({
+        message:
+          "Storage limit exceeded. Please delete some videos to free up space.",
+        storageUsed: user.storageUsed,
+        maxStorage: MAX_STORAGE,
+      });
+    }
+
+    // Check if storage exceeds 80% threshold
+    const storageThreshold = 0.8 * MAX_STORAGE;
+    const thresholdExceeded = newStorageUsed > storageThreshold;
+
+    // Update the storage usage in the database
+    user.storageUsed = Math.max(newStorageUsed, 0); // Ensure storageUsed doesn't go below zero
+    await user.save();
+
+    // Return success response with storage usage details
     res.status(200).json({
-      message: "Storage usage updated",
+      message: "Storage usage updated successfully",
       storageUsed: user.storageUsed,
+      maxStorage: MAX_STORAGE,
+      thresholdExceeded,
     });
   } catch (error) {
+    console.error("Error updating storage usage:", error);
     res.status(500).json({ message: "Server error", error });
+  }
+};
+
+exports.getUserStorage = async (req, res) => {
+  try {
+    const user = await User.findOne({ firebaseUserId: req.user.uid });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const MAX_STORAGE = 50 * 1024 * 1024; // 50 MB in bytes
+
+    res.status(200).json({
+      storageUsed: user.storageUsed,
+      maxStorage: MAX_STORAGE,
+      remainingStorage: Math.max(MAX_STORAGE - user.storageUsed, 0),
+      isThresholdExceeded: user.storageUsed > 0.8 * MAX_STORAGE,
+    });
+  } catch (error) {
+    console.error("Error fetching user storage details:", error);
+    res
+      .status(500)
+      .json({ message: "Error fetching user storage details", error });
   }
 };
 
