@@ -1,83 +1,78 @@
 "use client";
-import {
-  SignedIn,
-  SignedOut,
-  SignInButton,
-  SignOutButton,
-  useAuth,
-} from "@clerk/nextjs";
-import { useEffect } from "react";
-import { loginUser, registerUser } from "./api/route";
+import { useAuth } from "@/providers/AuthContext";
+import { getUserProfile, logoutFromFirebase } from "./api/route";
+import { useEffect, useState } from "react";
 
-const RootPage = () => {
-  const { isSignedIn, userId, getToken } = useAuth();
+interface UserProfile {
+  email: string;
+  name: string;
+  storageUsed: number;
+  dailyBandwidthUsed: number;
+}
+
+const HomePage = () => {
+  const { token, initialized } = useAuth(); // Wait for Firebase to initialize
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+
+  const fetchProfile = async () => {
+    setLoadingProfile(true);
+    if (token) {
+      try {
+        const profile = await getUserProfile(token); // Fetch profile from backend
+        setUserProfile(profile);
+        setError(null); // Clear error if fetching succeeds
+      } catch (err) {
+        console.error("Error fetching user profile:", err);
+        setError("Failed to fetch user profile.");
+        setUserProfile(null); // Reset profile state on error
+      }
+    } else {
+      setError("User not logged in.");
+      setUserProfile(null); // Reset profile state if no token
+    }
+    setLoadingProfile(false);
+  };
 
   useEffect(() => {
-    const syncUserWithBackend = async () => {
-      if (isSignedIn && userId) {
-        try {
-          const response = await fetch(`/api/clerk-user?userId=${userId}`);
-          if (!response.ok) {
-            console.error("Failed to fetch user data from Clerk API route");
-            return;
-          }
+    if (initialized) {
+      fetchProfile(); // Fetch user profile once Firebase is initialized
+    }
+  }, [initialized, token]); // Re-fetch if token updates
 
-          const user = await response.json();
-          const { id: clerkUserId, email_addresses, first_name } = user;
+  const handleLogout = async () => {
+    try {
+      await logoutFromFirebase();
+      window.location.href = "/login";
+    } catch (error) {
+      console.error("Failed to log out:", error);
+    }
+  };
 
-          // Sync with backend
-          const email = email_addresses[0]?.email_address;
-
-          const isNewUser = await checkIfNewUser(email); // Backend API to check if user exists
-          if (isNewUser) {
-            await registerUser({
-              email,
-              password: "placeholder_password", // Replace with proper implementation
-              name: first_name || "Unknown User",
-              clerkUserId,
-            });
-            console.log("User registered with backend.");
-          } else {
-            await loginUser({
-              email,
-              password: "placeholder_password", // Replace with proper implementation
-            });
-            console.log("User logged in with backend.");
-          }
-        } catch (error) {
-          console.error("Error syncing user with backend:", error);
-        }
-      }
-    };
-
-    syncUserWithBackend();
-  }, [isSignedIn, userId, getToken]);
+  if (!initialized) {
+    return <p>Loading...</p>; // Show loading while Firebase initializes
+  }
 
   return (
-    <main className="root-page">
+    <div>
       <h1>Welcome to Your App</h1>
-      <p>Explore the features and functionalities.</p>
-      <SignedIn>
-        <SignOutButton />
-      </SignedIn>
-      <SignedOut>
-        <SignInButton />
-      </SignedOut>
-    </main>
+      {error && <p style={{ color: "red" }}>{error}</p>}
+      {loadingProfile ? (
+        <p>Loading user profile...</p>
+      ) : userProfile ? (
+        <div>
+          <p>Email: {userProfile.email}</p>
+          <p>Name: {userProfile.name}</p>
+          <p>Storage Used: {userProfile.storageUsed} bytes</p>
+          <p>Daily Bandwidth Used: {userProfile.dailyBandwidthUsed} bytes</p>
+        </div>
+      ) : (
+        <p>No user profile available.</p>
+      )}
+      <button onClick={handleLogout}>Log Out</button>
+    </div>
   );
 };
 
-const checkIfNewUser = async (email: string): Promise<boolean> => {
-  try {
-    const response = await fetch(
-      `/api/check-user?email=${encodeURIComponent(email)}`
-    );
-    const { isNewUser } = await response.json();
-    return isNewUser;
-  } catch (error) {
-    console.error("Error checking user existence:", error);
-    return false;
-  }
-};
-
-export default RootPage;
+export default HomePage;

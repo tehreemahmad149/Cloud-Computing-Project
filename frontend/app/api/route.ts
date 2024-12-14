@@ -1,57 +1,80 @@
-import axios, { AxiosError } from "axios";
+import { auth } from "../firebase";
+import { signOut } from "firebase/auth";
+import { signInWithEmailAndPassword } from "firebase/auth";
 
-const API_URL = process.env.NEXT_PUBLIC_BACKEND_API_URL;
+export const registerUser = async (
+  email: string,
+  password: string,
+  name: string
+): Promise<void> => {
+  const response = await fetch("http://localhost:5000/api/users/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, name }),
+  });
 
-// Define the structure of the backend error response
-interface BackendError {
-  message: string;
-}
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || "Registration failed");
+  }
+};
 
-// Function to register a user
-export const registerUser = async (userData: {
-  email: string;
-  password: string;
-  name: string;
-  clerkUserId: string;
-}) => {
+export const loginUser = async (
+  email: string,
+  password: string
+): Promise<void> => {
   try {
-    const response = await axios.post(`${API_URL}/users/register`, userData);
-    return response.data;
-  } catch (error) {
-    const axiosError = error as AxiosError<BackendError>;
-    throw new Error(
-      axiosError.response?.data?.message || "Registration failed"
+    // Sign in with Firebase
+    const userCredential = await signInWithEmailAndPassword(
+      auth,
+      email,
+      password
     );
+
+    // Retrieve Firebase ID token
+    const token = await userCredential.user.getIdToken();
+
+    // Sync with backend
+    const response = await fetch("http://localhost:5000/api/users/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`, // Pass the Firebase token
+      },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || "Login failed");
+    }
+  } catch (err) {
+    console.error("Error logging in:", err);
+    throw err;
   }
 };
 
-// Function to log in a user
-export const loginUser = async (userData: {
-  email: string;
-  password: string;
-}) => {
-  try {
-    const response = await axios.post(`${API_URL}/users/login`, userData);
-    return response.data;
-  } catch (error) {
-    const axiosError = error as AxiosError<BackendError>;
-    throw new Error(axiosError.response?.data?.message || "Login failed");
-  }
+// Logout the current user
+export const logoutFromFirebase = async (): Promise<void> => {
+  return await signOut(auth);
 };
 
-// Function to get user profile
 export const getUserProfile = async (token: string) => {
   try {
-    const response = await axios.get(`${API_URL}/users/profile`, {
+    const response = await fetch("http://localhost:5000/api/users/profile", {
+      method: "GET",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${token}`, // Pass the Firebase token
       },
     });
-    return response.data;
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch user profile");
+    }
+
+    return await response.json(); // Return user profile
   } catch (error) {
-    const axiosError = error as AxiosError<BackendError>;
-    throw new Error(
-      axiosError.response?.data?.message || "Failed to fetch profile"
-    );
+    console.error("Error fetching user profile:", error);
+    throw error;
   }
 };

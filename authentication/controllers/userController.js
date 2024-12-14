@@ -12,11 +12,11 @@ exports.createUser = async (req, res) => {
       displayName: name,
     });
 
-    // Save the user to MongoDB
+    // Save the user to MongoDB (password will be hashed automatically)
     const user = new User({
       firebaseUserId: firebaseUser.uid,
       email,
-      password, // Optional, you can omit storing it in MongoDB
+      password, // This will be hashed by the pre-save hook in User.js
       name,
     });
 
@@ -30,16 +30,27 @@ exports.createUser = async (req, res) => {
 };
 
 exports.loginUser = async (req, res) => {
-  const { email } = req.body;
+  const { email } = req.body; // Extract email from the request
+  const firebaseToken = req.headers.authorization?.split(" ")[1]; // Extract Firebase token from Authorization header
+
+  if (!firebaseToken) {
+    return res.status(401).json({ message: "Unauthorized: No token provided" });
+  }
 
   try {
-    // Check if user exists in MongoDB
+    // Verify Firebase token
+    const decodedToken = await admin.auth().verifyIdToken(firebaseToken);
+
+    if (decodedToken.email !== email) {
+      return res.status(401).json({ message: "Unauthorized: Email mismatch" });
+    }
+
+    // Check if the user exists in MongoDB
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Firebase handles password validation client-side
     res.status(200).json({
       message: "Login successful",
       user: {
