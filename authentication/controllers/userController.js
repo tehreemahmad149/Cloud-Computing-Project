@@ -110,3 +110,36 @@ exports.resetDailyBandwidth = async (req, res) => {
     res.status(500).json({ message: "Server error", error });
   }
 };
+
+exports.validateToken = async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Missing or invalid token" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    // Verify the token with Firebase Admin SDK
+    const decodedToken = await admin.auth().verifyIdToken(token);
+
+    // Optionally, ensure the user exists in your MongoDB
+    const user = await User.findOne({ firebaseUserId: decodedToken.uid });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Return decoded token and user info
+    res.status(200).json({
+      valid: true,
+      user: {
+        firebaseUserId: decodedToken.uid,
+        email: decodedToken.email,
+        name: user.name,
+      },
+    });
+  } catch (error) {
+    console.error("Error verifying token:", error);
+    res.status(401).json({ valid: false, message: "Invalid token" });
+  }
+};

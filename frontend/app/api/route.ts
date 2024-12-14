@@ -33,7 +33,7 @@ export const loginUser = async (
 
     // Retrieve Firebase ID token
     const token = await userCredential.user.getIdToken();
-
+   
     // Sync with backend
     const response = await fetch("http://localhost:5000/api/users/login", {
       method: "POST",
