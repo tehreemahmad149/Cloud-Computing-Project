@@ -1,6 +1,31 @@
 const cloudinary = require("../cloudinaryConfig");
 const Video = require("../models/Storage");
 const fetch = require("node-fetch");
+const axios = require('axios');
+
+const sendLogRequest = async (logMessage) => {
+    try {
+        const response = await axios.post('http://localhost:5000/log', {
+            logMessage,
+        });
+        console.log('Log saved successfully:', response.data);
+    } catch (error) {
+        console.error('Error sending log request:', error.response ? error.response.data : error.message);
+    }
+};
+
+const callTrackUsageApi = async ( type, volume) => {
+  try {
+    const response = await axios.post(
+      'http://localhost:5000/track', // Replace with your production URL
+      { type, volume },
+    );
+    return response.data; // API response
+  } catch (error) {
+    console.error('Error calling trackUsage API:', error.response?.data || error.message);
+    throw error.response?.data || new Error('Error calling trackUsage API');
+  }
+};ew
 
 const AUTH_SERVICE_URL = "http://localhost:5000/api/users";
 
@@ -16,19 +41,22 @@ const getUserStorage = async (userId, token) => {
 
     if (!response.ok) {
       const error = await response.text();
-      console.error("Failed to fetch user storage details:", error);
+      sendLogRequest(`Failed to fetch user storage details: for ${userId} on ${new Date().toLocaleString()} Error: ${error}`);
+      //console.error("Failed to fetch user storage details:");
       throw new Error("Failed to fetch user storage details");
     }
 
     return await response.json();
   } catch (error) {
-    console.error("Error calling getUserStorage API:", error);
+    sendLogRequest(`Error calling getUserStorage API: ${error}`);
+    //console.error("Error calling getUserStorage API:", error);
     throw error;
   }
 };
 
 // Helper function to update storage usage
 const updateStorageUsage = async (userId, usageDelta, token) => {
+  
   try {
     const response = await fetch(`${AUTH_SERVICE_URL}/updateStorageUsage`, {
       method: "PUT",
@@ -41,10 +69,12 @@ const updateStorageUsage = async (userId, usageDelta, token) => {
 
     if (!response.ok) {
       const error = await response.text();
-      console.error("Failed to update storage usage:", error);
+      sendLogRequest(`Failed to update storage usage: ${error}`);
+      //console.error("Failed to update storage usage:", error);
     }
   } catch (error) {
-    console.error("Error calling updateStorageUsage API:", error);
+    sendLogRequest(`Error calling updateStorageUsage API: ${error}`);
+    //console.error("Error calling updateStorageUsage API:", error);
   }
 };
 
@@ -63,12 +93,23 @@ exports.uploadVideo = async (req, res) => {
       req.user.firebaseUserId,
       req.headers.authorization
     );
+    
+    
 
     // Check if the upload exceeds the remaining storage
     if (userStorage.remainingStorage < file.size) {
+      sendLogRequest(`Not enough storage available. Please free up space. ${user.firebaseUserId}`);
       return res.status(400).json({
+        
         message: "Not enough storage available. Please free up space.",
       });
+    }
+    const usageCheck = await callTrackUsageApi('upload', file.size);
+    if (!usageCheck.allows) {
+      return res.status(403).json({ message: usageCheck.message });
+    }
+    else{
+      //paste code that allows update
     }
 
     // Upload video to Cloudinary
@@ -93,10 +134,11 @@ exports.uploadVideo = async (req, res) => {
       file.size,
       req.headers.authorization
     );
-
+    sendLogRequest(`Video uploaded successfully. ${user.firebaseUserId}`);
     res.status(200).json({ message: "Video uploaded successfully", video });
   } catch (error) {
-    console.error("Error uploading video:", error);
+    sendLogRequest(`Error uploading video: ${user.firebaseUserId} Error ${error}`);
+    //console.error("Error uploading video:", error);
     res.status(500).json({ message: "Error uploading video", error });
   }
 };
@@ -108,26 +150,38 @@ exports.replaceVideo = async (req, res) => {
 
   try {
     if (!file) {
+      sendLogRequest(`No video file selected: ${user.firebaseUserId}`);
       return res.status(400).json({ message: "No video file provided" });
     }
 
     const video = await Video.findById(videoId);
 
     if (!video || video.userId !== req.user.firebaseUserId) {
+      sendLogRequest(`Video not found or unauthorized: ${user.firebaseUserId}`);
       return res
         .status(404)
         .json({ message: "Video not found or unauthorized" });
     }
-
-    // Delete the old video from Cloudinary
-    await cloudinary.uploader.destroy(video.publicId, {
-      resource_type: "video",
-    });
-
-    // Upload the new video to Cloudinary
-    const result = await cloudinary.uploader.upload(file.path, {
-      resource_type: "video",
-    });
+    usageCheck = await callTrackUsageApi('delete', file.size);
+    if (!usageCheck.allows) {
+      return res.status(403).json({ message: usageCheck.message });
+    }
+    else{
+       // Delete the old video from Cloudinary
+      await cloudinary.uploader.destroy(video.publicId, {
+        resource_type: "video",
+      });
+    }
+    usageCheck = await callTrackUsageApi('upload', file.size);
+    if (!usageCheck.allows) {
+      return res.status(403).json({ message: usageCheck.message });
+    }
+    else{
+       // Upload the new video to Cloudinary
+      const result = await cloudinary.uploader.upload(file.path, {
+        resource_type: "video",
+      });
+    }
 
     // Update video details in MongoDB
     const oldSize = video.size; // Track the size of the old video
@@ -145,10 +199,11 @@ exports.replaceVideo = async (req, res) => {
       usageDelta,
       req.headers.authorization
     );
-
+    sendLogRequest(`Video replaced successfully: ${user.firebaseUserId}`);
     res.status(200).json({ message: "Video replaced successfully", video });
   } catch (error) {
-    console.error("Error replacing video:", error);
+    sendLogRequest(`Error replacing video: ${user.firebaseUserId}`);
+    //console.error("Error replacing video:", error);
     res.status(500).json({ message: "Error replacing video", error });
   }
 };
@@ -160,7 +215,8 @@ exports.getVideos = async (req, res) => {
 
     res.status(200).json({ videos });
   } catch (error) {
-    console.error("Error fetching videos:", error);
+    sendLogRequest(`Error fetching video: ${user.firebaseUserId}: ${error}`);
+    //console.error("Error fetching videos:", error);
     res.status(500).json({ message: "Error fetching videos", error });
   }
 };
@@ -173,6 +229,7 @@ exports.getVideoById = async (req, res) => {
     const video = await Video.findById(videoId);
 
     if (!video || video.userId !== req.user.firebaseUserId) {
+      sendLogRequest(`Video not found or unauthorized: ${user.firebaseUserId}`);
       return res
         .status(404)
         .json({ message: "Video not found or unauthorized" });
@@ -180,28 +237,36 @@ exports.getVideoById = async (req, res) => {
 
     res.status(200).json({ video });
   } catch (error) {
-    console.error("Error fetching video:", error);
+    sendLogRequest(`Error fetching video: ${user.firebaseUserId}`);
+    //console.error("Error fetching video:", error);
     res.status(500).json({ message: "Error fetching video", error });
   }
 };
 
 // Delete a single video
 exports.deleteVideo = async (req, res) => {
+
   const { videoId } = req.body;
 
   try {
     const video = await Video.findById(videoId);
 
     if (!video || video.userId !== req.user.firebaseUserId) {
+      sendLogRequest(`Video not found or unauthorized: ${user.firebaseUserId}`);
       return res
         .status(404)
         .json({ message: "Video not found or unauthorized" });
     }
-
-    // Delete video from Cloudinary
-    await cloudinary.uploader.destroy(video.publicId, {
-      resource_type: "video",
-    });
+    usageCheck = await callTrackUsageApi('delete', video.size);
+    if (!usageCheck.allows) {
+      return res.status(403).json({ message: usageCheck.message });
+    }
+    else{
+       // Delete the old video from Cloudinary
+      await cloudinary.uploader.destroy(video.publicId, {
+        resource_type: "video",
+      });
+    }
 
     // Delete video from MongoDB using deleteOne
     const size = video.size; // Track size for updating storage
@@ -213,10 +278,11 @@ exports.deleteVideo = async (req, res) => {
       -size,
       req.headers.authorization
     );
-
+    sendLogRequest(`Video deleted successfully: ${user.firebaseUserId}`);
     res.status(200).json({ message: "Video deleted successfully" });
   } catch (error) {
-    console.error("Error deleting video:", error);
+    sendLogRequest(`Error deleting video: ${user.firebaseUserId} Error: ${error}`);
+    //console.error("Error deleting video:", error);
     res.status(500).json({ message: "Error deleting video", error });
   }
 };
@@ -232,9 +298,23 @@ exports.bulkDeleteVideos = async (req, res) => {
     });
 
     if (videos.length === 0) {
+      sendLogRequest(`Videos not found or unauthorized: ${user.firebaseUserId}`);
       return res
         .status(404)
         .json({ message: "No videos found or unauthorized" });
+    }
+
+
+    //FILE SIZE = CUMULATIVE VIDEO SIZE////ATTENTION I DONT KNOW THAT
+    //CREATE A sumSize variable and store
+    usageCheck = await callTrackUsageApi('delete', sumSize);
+    if (!usageCheck.allows) {
+      return res.status(403).json({ message: usageCheck.message });
+    }
+    else{
+       // Delete videos from Cloudinary
+       //paste code here
+      
     }
 
     // Delete videos from Cloudinary
@@ -255,10 +335,11 @@ exports.bulkDeleteVideos = async (req, res) => {
       -totalSize,
       req.headers.authorization
     );
-
+    sendLogRequest(`Videos deleted successfully: ${user.firebaseUserId}`);
     res.status(200).json({ message: "Videos deleted successfully" });
   } catch (error) {
-    console.error("Error bulk deleting videos:", error);
+    sendLogRequest(`Error bulk deleting videos: ${user.firebaseUserId} Error: ${error}`);
+    //console.error("Error bulk deleting videos:", error);
     res.status(500).json({ message: "Error bulk deleting videos", error });
   }
 };

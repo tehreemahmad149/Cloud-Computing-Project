@@ -1,6 +1,7 @@
 const Usage = require('../models/usage');
+const User = require('../models/users');
 const Log = require('../models/logs');  // Adjust the path as necessary
-
+const AUTH_SERVICE_URL = "http://localhost:5000/api/users";
 
 // Create a new log entry
 const createLog = async (logMessage) => {
@@ -20,11 +21,9 @@ const createLog = async (logMessage) => {
 // New endpoint to create a log directly
 const logRequest = async (req, res) => {
     const { logMessage } = req.body;
-
     if (!logMessage) {
         return res.status(400).json({ message: 'Log message is required.' });
     }
-
     try {
         await createLog(logMessage);
         res.status(200).json({ message: 'Log saved successfully.' });
